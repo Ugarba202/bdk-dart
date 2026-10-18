@@ -196,6 +196,8 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
 
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1

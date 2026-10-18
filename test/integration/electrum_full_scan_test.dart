@@ -97,7 +97,8 @@ void main() {
 
               final events = wallet.applyUpdateEvents(update: update);
 
-              for (final event in events.whereType<TxUnconfirmedWalletEvent>()) {
+              for (final event
+                  in events.whereType<TxUnconfirmedWalletEvent>()) {
                 if (event.txid.toString() == txid) {
                   unconfirmedEvent = event;
                 }
