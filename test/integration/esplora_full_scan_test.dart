@@ -68,10 +68,13 @@ void main() {
           final addressString = revealed.address.toString();
           printOnFailure('Funding Regtest address: $addressString');
 
-          final txid = await fundRegtestAddress(addressString, amount: 1.0);
+          final txid = await broadcastRegtestAddress(
+            addressString,
+            amount: 1.0,
+          );
           printOnFailure('Funding transaction ID: $txid');
 
-          // Deterministic wait: Poll Esplora for the transaction
+          // Deterministic wait: Poll Esplora for the transaction in mempool
           Object? lastError;
           var txFound = false;
 
@@ -102,22 +105,140 @@ void main() {
                 'Last error: $lastError',
           );
 
-          // Now perform the single fullScan since we know it's indexed
-          final requestBuilder = wallet.startFullScan();
-          addDisposer(disposers, requestBuilder.dispose);
+          // Phase 1: Scan while the transaction is unconfirmed.
+          TxUnconfirmedWalletEvent? unconfirmedEvent;
+          var unconfirmedPositionSeen = false;
+          Object? lastUnconfirmedError;
 
-          final request = requestBuilder.build();
-          addDisposer(disposers, request.dispose);
+          for (var attempt = 0; attempt < 15; attempt++) {
+            try {
+              final requestBuilder = wallet.startFullScan();
+              addDisposer(disposers, requestBuilder.dispose);
 
-          final update = client.fullScan(
-            request: request,
-            stopGap: 20,
-            parallelRequests: 1,
+              final request = requestBuilder.build();
+              addDisposer(disposers, request.dispose);
+
+              final update = client.fullScan(
+                request: request,
+                stopGap: 20,
+                parallelRequests: 1,
+              );
+              addDisposer(disposers, update.dispose);
+
+              final events = wallet.applyUpdateEvents(update: update);
+
+              for (final event
+                  in events.whereType<TxUnconfirmedWalletEvent>()) {
+                if (event.txid.toString() == txid) {
+                  unconfirmedEvent = event;
+                }
+              }
+
+              final details = wallet.txDetails(
+                txid: Txid.fromString(hex: txid),
+              );
+
+              if (details != null &&
+                  details.chainPosition is UnconfirmedChainPosition) {
+                unconfirmedPositionSeen = true;
+              }
+
+              if (unconfirmedEvent != null && unconfirmedPositionSeen) {
+                break;
+              }
+            } catch (error) {
+              lastUnconfirmedError = error;
+              printOnFailure(
+                'Esplora unconfirmed scan attempt ${attempt + 1} failed: $error',
+              );
+            }
+
+            if (attempt < 14) {
+              await Future<void>.delayed(const Duration(seconds: 1));
+            }
+          }
+
+          expect(
+            unconfirmedEvent,
+            isNotNull,
+            reason:
+                'The funded transaction should produce a TxUnconfirmedWalletEvent. '
+                'Last error: $lastUnconfirmedError',
           );
-          addDisposer(disposers, update.dispose);
 
-          wallet.applyUpdate(update: update);
-          final balance = wallet.balance().total;
+          final pendingEvent = unconfirmedEvent!;
+
+          expect(pendingEvent.tx.computeTxid().toString(), equals(txid));
+          expect(
+            pendingEvent.oldBlockTime,
+            isNull,
+            reason: 'The transaction is first observed in the mempool.',
+          );
+
+          expect(
+            unconfirmedPositionSeen,
+            isTrue,
+            reason:
+                'The wallet should expose UnconfirmedChainPosition before mining.',
+          );
+
+          final pendingDetails = wallet.txDetails(
+            txid: Txid.fromString(hex: txid),
+          );
+
+          expect(pendingDetails, isNotNull);
+          expect(
+            pendingDetails!.chainPosition,
+            isA<UnconfirmedChainPosition>(),
+          );
+
+          // Phase 2: Mine the transaction before running the confirmed scan.
+          await mineRegtestBlocks();
+
+          // Phase 3: Run the confirmed scan loop until confirmedEvent is captured
+          var balance = wallet.balance().total;
+          TxConfirmedWalletEvent? confirmedEvent;
+          Object? lastConfirmedError;
+
+          for (var attempt = 0; attempt < 15; attempt++) {
+            try {
+              final requestBuilder = wallet.startFullScan();
+              addDisposer(disposers, requestBuilder.dispose);
+
+              final request = requestBuilder.build();
+              addDisposer(disposers, request.dispose);
+
+              final update = client.fullScan(
+                request: request,
+                stopGap: 20,
+                parallelRequests: 1,
+              );
+              addDisposer(disposers, update.dispose);
+
+              final events = wallet.applyUpdateEvents(update: update);
+
+              for (final event in events.whereType<TxConfirmedWalletEvent>()) {
+                if (event.txid.toString() == txid) {
+                  confirmedEvent = event;
+                }
+              }
+
+              balance = wallet.balance().total;
+
+              if (confirmedEvent != null && balance.toSat() > 0) {
+                break;
+              }
+            } catch (error) {
+              lastConfirmedError = error;
+              printOnFailure(
+                'Esplora confirmed scan attempt ${attempt + 1} failed: $error',
+              );
+            }
+
+            if (confirmedEvent == null && attempt < 14) {
+              await Future<void>.delayed(const Duration(seconds: 1));
+            }
+          }
 
           wallet.persist(persister: persister);
 
@@ -126,7 +247,45 @@ void main() {
           expect(
             balance.toSat(),
             greaterThan(0),
-            reason: 'Wallet should have a positive balance after funding',
+            reason:
+                'Wallet should have a positive balance after funding. '
+                'Last error: $lastConfirmedError',
+          );
+
+          expect(
+            confirmedEvent,
+            isNotNull,
+            reason:
+                'The funded transaction should produce a confirmed wallet event.',
+          );
+
+          final event = confirmedEvent!;
+
+          expect(event.tx.computeTxid().toString(), equals(txid));
+          expect(event.blockTime.blockId.height, greaterThan(0));
+          expect(event.blockTime.blockId.hash.toString(), isNotEmpty);
+          expect(event.blockTime.confirmationTime, greaterThan(0));
+
+          final details = wallet.txDetails(txid: Txid.fromString(hex: txid));
+
+          expect(details, isNotNull);
+          expect(details!.txid.toString(), equals(txid));
+          expect(details.tx.computeTxid().toString(), equals(txid));
+          expect(details.chainPosition, isA<ConfirmedChainPosition>());
+
+          final position = details.chainPosition as ConfirmedChainPosition;
+
+          expect(
+            position.confirmationBlockTime.blockId.height,
+            equals(event.blockTime.blockId.height),
+          );
+          expect(
+            position.confirmationBlockTime.blockId.hash.toString(),
+            equals(event.blockTime.blockId.hash.toString()),
+          );
+          expect(
+            position.confirmationBlockTime.confirmationTime,
+            equals(event.blockTime.confirmationTime),
           );
         } finally {
           disposeAll(disposers);

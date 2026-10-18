@@ -60,25 +60,32 @@ Future<dynamic> _rpcCall(String method, [dynamic params = const []]) async {
   }
 }
 
-/// Funds a Regtest address with the given [amount] (in BTC) and mines 2 blocks
-/// to confirm it.
+/// Broadcasts a transaction to a Regtest address without mining it.
 ///
-/// Returns the transaction ID as a String.
-Future<String> fundRegtestAddress(String address, {double amount = 1.0}) async {
-  // 1. Send BTC to the provided address with a fixed fee rate to avoid estimation errors
-  final txid =
-      await _rpcCall('sendtoaddress', {
-            'address': address,
-            'amount': amount,
-            'fee_rate': 1.0, // 1 sat/vB
-          })
-          as String;
+/// Returns the transaction ID.
+Future<String> broadcastRegtestAddress(
+  String address, {
+  double amount = 1.0,
+}) async {
+  return await _rpcCall('sendtoaddress', {
+        'address': address,
+        'amount': amount,
+        'fee_rate': 1.0,
+      })
+      as String;
+}
 
-  // 2. Get a new address to receive the block rewards
+/// Mines [blocks] Regtest blocks.
+Future<void> mineRegtestBlocks({int blocks = 2}) async {
   final minerAddress = await _rpcCall('getnewaddress') as String;
+  await _rpcCall('generatetoaddress', [blocks, minerAddress]);
+}
 
-  // 3. Mine 2 blocks to confirm the transaction (2 confirmations)
-  await _rpcCall('generatetoaddress', [2, minerAddress]);
-
+/// Funds a Regtest address and mines 2 blocks to confirm the transaction.
+///
+/// Returns the transaction ID.
+Future<String> fundRegtestAddress(String address, {double amount = 1.0}) async {
+  final txid = await broadcastRegtestAddress(address, amount: amount);
+  await mineRegtestBlocks();
   return txid;
 }
