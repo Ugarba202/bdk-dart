@@ -2,9 +2,10 @@ import 'package:bdk_demo/core/theme/app_theme.dart';
 import 'package:bdk_demo/core/utils/formatters.dart';
 import 'package:bdk_demo/features/shared/widgets/secondary_app_bar.dart';
 import 'package:bdk_demo/features/shared/widgets/wallet_ui_helpers.dart';
-import 'package:bdk_demo/features/transactions/models/demo_tx_details.dart';
+import 'package:bdk_demo/features/transactions/models/transaction_history_item.dart';
 import 'package:bdk_demo/features/transactions/transactions_controller.dart';
 import 'package:bdk_demo/models/currency_unit.dart';
+import 'package:bdk_demo/providers/wallet_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,7 +14,7 @@ class TransactionDetailPage extends ConsumerWidget {
 
   const TransactionDetailPage({super.key, required this.txid});
 
-  String _formatAmount(DemoTxDetails transaction) {
+  String _formatAmount(TransactionHistoryItem transaction) {
     final amount = transaction.netAmount;
     final prefix = amount >= 0 ? '+' : '-';
     final value = Formatters.formatBalance(amount.abs(), CurrencyUnit.satoshi);
@@ -28,7 +29,25 @@ class TransactionDetailPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final transactionAsync = ref.watch(transactionDetailsProvider(txid));
+    final activeWalletId = ref.watch(activeWalletIdProvider);
+    final hasActiveWallet = ref.watch(hasActiveTransactionWalletProvider);
+    if (!hasActiveWallet) {
+      return const Scaffold(
+        appBar: SecondaryAppBar(title: 'Transaction Detail'),
+        body: SafeArea(
+          child: WalletStateCard(
+            icon: Icons.account_balance_wallet_outlined,
+            title: 'No active wallet',
+            message:
+                'Create or load a wallet before viewing transaction details.',
+            centered: true,
+          ),
+        ),
+      );
+    }
+    final transactionAsync = ref.watch(
+      transactionDetailsProvider((walletId: activeWalletId, txid: txid)),
+    );
 
     return Scaffold(
       appBar: const SecondaryAppBar(title: 'Transaction Detail'),
@@ -37,14 +56,14 @@ class TransactionDetailPage extends ConsumerWidget {
           loading: () => const WalletStateCard(
             icon: Icons.hourglass_bottom,
             title: 'Loading transaction',
-            message: 'Preparing placeholder transaction details...',
+            message: 'Reading wallet transaction details...',
             showSpinner: true,
             centered: true,
           ),
           error: (_, __) => WalletStateCard(
             icon: Icons.error_outline,
             title: 'Transaction unavailable',
-            message: 'The demo could not load placeholder transaction details.',
+            message: 'The wallet transaction details could not be loaded.',
             accentColor: theme.colorScheme.error,
             centered: true,
           ),
@@ -54,7 +73,7 @@ class TransactionDetailPage extends ConsumerWidget {
                 icon: Icons.search_off,
                 title: 'Transaction not found',
                 message:
-                    'No placeholder transaction was found for this txid.\n\n$txid',
+                    'No wallet transaction was found for this txid.\n\n$txid',
                 centered: true,
               );
             }
@@ -80,13 +99,6 @@ class TransactionDetailPage extends ConsumerWidget {
                             ),
                             WalletStatusChip(status: transaction.statusLabel),
                           ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Standalone transaction detail view for the selected placeholder transaction.',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurface.withAlpha(170),
-                          ),
                         ),
                       ],
                     ),

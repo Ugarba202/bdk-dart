@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:bdk_demo/core/router/app_router.dart';
 import 'package:bdk_demo/features/shared/widgets/secondary_app_bar.dart';
 import 'package:bdk_demo/features/shared/widgets/wallet_ui_helpers.dart';
+import 'package:bdk_demo/features/transactions/transactions_controller.dart';
 import 'package:bdk_demo/providers/blockchain_providers.dart';
 import 'package:bdk_demo/providers/connectivity_provider.dart';
 import 'package:bdk_demo/providers/send_providers.dart';
@@ -351,6 +352,7 @@ class _SendPageState extends ConsumerState<SendPage> {
       ref
           .read(balanceSnapshotProvider.notifier)
           .applyFromWallet(wallet, record.id);
+      ref.invalidate(transactionsControllerProvider(record.id));
       _showSnackBar('Transaction broadcast successfully.');
       context.go(AppRoutes.home);
     } catch (_) {

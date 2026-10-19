@@ -115,7 +115,9 @@ class CurrentReceiveAddressNotifier extends Notifier<ReceiveAddressState> {
         return;
       }
 
-      ref.read(activeWalletProvider.notifier).replaceWallet(updatedWallet);
+      ref
+          .read(activeWalletProvider.notifier)
+          .replaceWallet(updatedWallet, walletId: record.id);
       state = successState;
     } catch (error) {
       final errorState = ReceiveAddressState(

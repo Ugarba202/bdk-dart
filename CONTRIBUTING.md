@@ -32,8 +32,8 @@ bash ./scripts/generate_bindings.sh
 
 ## Checks
 
-These shortcuts require `just`; `just ci` runs the full local format, analysis,
-test, and demo check set.
+These shortcuts require `just` 1.38.0 or newer; `just ci` runs the full local
+format, analysis, test, and demo check set.
 
 Before opening a PR, run the relevant subset:
 

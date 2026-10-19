@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     branches: [main, "**"]
   pull_request:
@@ -41,6 +42,9 @@ jobs:
 
       - name: Ensure generated bindings exist
         run: test -f lib/bdk.dart
+
+      - name: Check generated binding drift
+        run: git diff --exit-code -- lib/bdk.dart
 
       - name: Pub get
         run: dart pub get
@@ -198,6 +202,7 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
+          packages: ""
 
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
@@ -244,8 +249,7 @@ jobs:
             --manifest-path native/Cargo.toml \
             --package bdk_dart_ffi \
             --target "${{ matrix.rust_target }}" \
-            --target-dir /tmp/bdk-dart-android-target \
-            --config native/.cargo/config.toml
+            --target-dir /tmp/bdk-dart-android-target
 
       - name: Verify NDK 27 native library alignment
         run: dart scripts/check_android_elf_alignment.dart /tmp/bdk-dart-android-target/${{ matrix.rust_target }}/release/libbdk_dart_ffi.so

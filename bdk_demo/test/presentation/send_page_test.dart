@@ -1,6 +1,9 @@
 import 'package:bdk_dart/bdk.dart' hide Key;
 import 'package:bdk_demo/core/router/app_router.dart';
 import 'package:bdk_demo/features/send/send_page.dart';
+import 'package:bdk_demo/features/transactions/models/transaction_history_item.dart';
+import 'package:bdk_demo/features/transactions/transactions_controller.dart';
+import 'package:bdk_demo/features/transactions/transactions_repository.dart';
 import 'package:bdk_demo/models/wallet_record.dart';
 import 'package:bdk_demo/providers/connectivity_provider.dart';
 import 'package:bdk_demo/providers/send_providers.dart';
@@ -44,6 +47,7 @@ void main() {
     bool seedActiveWallet = true,
     SendTransactionDraftBuilder? draftBuilder,
     BlockchainClientFactory? blockchainClientFactory,
+    TransactionsRepository? transactionsRepository,
   }) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
@@ -62,6 +66,10 @@ void main() {
         if (blockchainClientFactory != null)
           blockchainClientFactoryProvider.overrideWithValue(
             blockchainClientFactory,
+          ),
+        if (transactionsRepository != null)
+          transactionsRepositoryProvider.overrideWithValue(
+            transactionsRepository,
           ),
       ],
     );
@@ -388,6 +396,71 @@ void main() {
     expect(find.text('Home route'), findsOneWidget);
   });
 
+  testWidgets('confirm refreshes an already-mounted transaction history', (
+    tester,
+  ) async {
+    final repo = _MutableTransactionsRepository();
+    final fake = _SendFlowFake(
+      onBroadcast: () {
+        repo.transactions = [
+          TransactionHistoryItem(
+            txid: 'broadcast-tx',
+            sent: 1000,
+            received: 0,
+            pending: true,
+          ),
+        ];
+      },
+    );
+    final container = await createContainer(
+      draftBuilder: fake.build,
+      blockchainClientFactory: (_) => _FakeBlockchainClient(),
+      transactionsRepository: repo,
+    );
+    final subscription = container.listen(
+      transactionsControllerProvider('send-wallet'),
+      (_, __) {},
+    );
+    addTearDown(subscription.close);
+    await container
+        .read(transactionsControllerProvider('send-wallet').notifier)
+        .loadTransactions();
+
+    await pumpSendPageWithRouter(tester, container);
+    await fillSendForm(tester);
+    await tapReview(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Confirm'));
+    await tester.pumpAndSettle();
+
+    final state = container.read(transactionsControllerProvider('send-wallet'));
+    expect(state.transactions.single.txid, 'broadcast-tx');
+  });
+
+  testWidgets('broadcast requests a client for the active wallet network', (
+    tester,
+  ) async {
+    final fake = _SendFlowFake();
+    WalletNetwork? broadcastNetwork;
+    final container = await createContainer(
+      draftBuilder: fake.build,
+      blockchainClientFactory: (network) {
+        broadcastNetwork = network;
+        return _FakeBlockchainClient();
+      },
+    );
+
+    await pumpSendPageWithRouter(tester, container);
+    await fillSendForm(tester);
+    await tapReview(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Confirm'));
+    await tester.pumpAndSettle();
+
+    expect(broadcastNetwork, WalletNetwork.testnet);
+    expect(fake.broadcastCount, 1);
+  });
+
   testWidgets('build failure shows friendly snackbar and stays on SendPage', (
     tester,
   ) async {
@@ -436,10 +509,15 @@ void main() {
 }
 
 final class _SendFlowFake {
-  _SendFlowFake({this.failBuild = false, this.failBroadcast = false});
+  _SendFlowFake({
+    this.failBuild = false,
+    this.failBroadcast = false,
+    this.onBroadcast,
+  });
 
   final bool failBuild;
   final bool failBroadcast;
+  final VoidCallback? onBroadcast;
   int buildCount = 0;
   int broadcastCount = 0;
   int? builtAmountSat;
@@ -463,10 +541,29 @@ final class _SendFlowFake {
         if (failBroadcast) {
           throw StateError('broadcast failed');
         }
+        onBroadcast?.call();
         return 'fake-txid';
       },
     );
   }
+}
+
+final class _MutableTransactionsRepository implements TransactionsRepository {
+  List<TransactionHistoryItem> transactions = const [];
+
+  @override
+  bool isAvailableForWallet(String? walletId) => walletId != null;
+
+  @override
+  Future<TransactionHistoryItem?> loadTransactionByTxid(String txid) async {
+    for (final transaction in transactions) {
+      if (transaction.txid == txid) return transaction;
+    }
+    return null;
+  }
+
+  @override
+  Future<List<TransactionHistoryItem>> loadTransactions() async => transactions;
 }
 
 final class _FakeBlockchainClient implements BlockchainClient {

@@ -2,9 +2,10 @@ import 'package:bdk_demo/core/theme/app_theme.dart';
 import 'package:bdk_demo/core/utils/formatters.dart';
 import 'package:bdk_demo/features/shared/widgets/secondary_app_bar.dart';
 import 'package:bdk_demo/features/shared/widgets/wallet_ui_helpers.dart';
-import 'package:bdk_demo/features/transactions/models/demo_tx_details.dart';
+import 'package:bdk_demo/features/transactions/models/transaction_history_item.dart';
 import 'package:bdk_demo/features/transactions/transactions_controller.dart';
 import 'package:bdk_demo/models/currency_unit.dart';
+import 'package:bdk_demo/providers/wallet_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -12,7 +13,10 @@ import 'package:go_router/go_router.dart';
 class TransactionsListPage extends ConsumerWidget {
   const TransactionsListPage({super.key});
 
-  void _openTransactionDetail(BuildContext context, DemoTxDetails transaction) {
+  void _openTransactionDetail(
+    BuildContext context,
+    TransactionHistoryItem transaction,
+  ) {
     context.pushNamed(
       'transactionDetail',
       pathParameters: {'txid': transaction.txid},
@@ -21,82 +25,16 @@ class TransactionsListPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final state = ref.watch(transactionsControllerProvider);
-    final isLoading = state.status == TransactionsLoadState.loading;
+    final activeWalletId = ref.watch(activeWalletIdProvider);
+    final controllerProvider = transactionsControllerProvider(activeWalletId);
+    final state = ref.watch(controllerProvider);
 
     return Scaffold(
-      appBar: const SecondaryAppBar(title: 'Transactions Demo'),
+      appBar: const SecondaryAppBar(title: 'Transaction History'),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        color: theme.colorScheme.primaryContainer,
-                      ),
-                      child: Icon(
-                        Icons.receipt_long_outlined,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Transactions Demo',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Preview placeholder transaction list and detail states in a standalone transactions feature. This demo does not sync a real wallet or query the blockchain.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withAlpha(180),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: isLoading
-                          ? null
-                          : () => ref
-                                .read(transactionsControllerProvider.notifier)
-                                .loadTransactions(),
-                      icon: isLoading
-                          ? SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: theme.colorScheme.onPrimary,
-                              ),
-                            )
-                          : const Icon(Icons.download_rounded),
-                      label: Text(
-                        state.status == TransactionsLoadState.success ||
-                                state.status == TransactionsLoadState.error
-                            ? 'Reload Transactions'
-                            : 'Load Transactions Demo',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            const _SectionHeading(
-              title: 'Transactions',
-              subtitle: 'Placeholder transaction list and detail navigation',
-            ),
-            const SizedBox(height: 12),
             _TransactionsBody(state: state, onTap: _openTransactionDetail),
           ],
         ),
@@ -107,7 +45,8 @@ class TransactionsListPage extends ConsumerWidget {
 
 class _TransactionsBody extends StatelessWidget {
   final TransactionsState state;
-  final void Function(BuildContext context, DemoTxDetails transaction) onTap;
+  final void Function(BuildContext context, TransactionHistoryItem transaction)
+  onTap;
 
   const _TransactionsBody({required this.state, required this.onTap});
 
@@ -116,90 +55,77 @@ class _TransactionsBody extends StatelessWidget {
     final theme = Theme.of(context);
 
     return switch (state.status) {
+      TransactionsLoadState.noWallet => const WalletStateCard(
+        icon: Icons.account_balance_wallet_outlined,
+        title: 'No active wallet',
+        message: 'Create or load a wallet before viewing transaction history.',
+      ),
       TransactionsLoadState.idle => WalletStateCard(
         icon: Icons.info_outline,
-        title: 'Transactions not loaded yet',
+        title: 'Transaction history not loaded yet',
         message: state.statusMessage,
       ),
       TransactionsLoadState.loading => const WalletStateCard(
         icon: Icons.hourglass_bottom,
-        title: 'Loading placeholder transactions...',
-        message: 'Preparing scaffolded transaction rows.',
+        title: 'Loading transaction history...',
+        message: 'Reading wallet transactions.',
         showSpinner: true,
       ),
       TransactionsLoadState.error => WalletStateCard(
         icon: Icons.error_outline,
-        title: 'Transaction demo failed',
+        title: 'Transaction history failed',
         message: state.errorMessage ?? state.statusMessage,
         accentColor: theme.colorScheme.error,
       ),
-      TransactionsLoadState.success =>
-        state.transactions.isEmpty
-            ? const WalletStateCard(
-                icon: Icons.history_toggle_off,
-                title: 'No transactions yet',
-                message:
-                    'The transaction demo loaded successfully, but no placeholder transactions are configured yet.',
-              )
-            : Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      for (
-                        var index = 0;
-                        index < state.transactions.length;
-                        index++
-                      ) ...[
-                        _TransactionRow(
-                          transaction: state.transactions[index],
-                          onTap: () =>
-                              onTap(context, state.transactions[index]),
-                        ),
-                        if (index < state.transactions.length - 1)
-                          const SizedBox(height: 12),
-                      ],
+      TransactionsLoadState.success => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (state.errorMessage != null) ...[
+            WalletStateCard(
+              icon: Icons.sync_problem_outlined,
+              title: 'Transaction history may be out of date',
+              message: state.errorMessage!,
+              accentColor: theme.colorScheme.error,
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (state.transactions.isEmpty)
+            const WalletStateCard(
+              icon: Icons.history_toggle_off,
+              title: 'No transactions yet',
+              message:
+                  'The active wallet has no transactions yet. Sync the wallet or receive funds to populate history.',
+            )
+          else
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    for (
+                      var index = 0;
+                      index < state.transactions.length;
+                      index++
+                    ) ...[
+                      _TransactionRow(
+                        transaction: state.transactions[index],
+                        onTap: () => onTap(context, state.transactions[index]),
+                      ),
+                      if (index < state.transactions.length - 1)
+                        const SizedBox(height: 12),
                     ],
-                  ),
+                  ],
                 ),
               ),
+            ),
+        ],
+      ),
     };
   }
 }
 
-class _SectionHeading extends StatelessWidget {
-  final String title;
-  final String subtitle;
-
-  const _SectionHeading({required this.title, required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurface.withAlpha(170),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _TransactionRow extends StatelessWidget {
-  final DemoTxDetails transaction;
+  final TransactionHistoryItem transaction;
   final VoidCallback onTap;
 
   const _TransactionRow({required this.transaction, required this.onTap});

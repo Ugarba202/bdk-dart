@@ -161,6 +161,9 @@ class BalanceSnapshotNotifier extends Notifier<WalletBalanceSnapshot?> {
 
   void clear() => state = null;
 
+  @visibleForTesting
+  void applySnapshot(WalletBalanceSnapshot snapshot) => state = snapshot;
+
   void applyFromWallet(Wallet wallet, String walletId) {
     final b = wallet.balance();
     state = WalletBalanceSnapshot(
@@ -343,7 +346,9 @@ class SyncController extends Notifier<int> {
       }
 
       final syncedWallet = reloadedWallet;
-      ref.read(activeWalletProvider.notifier).replaceWallet(syncedWallet);
+      ref
+          .read(activeWalletProvider.notifier)
+          .replaceWallet(syncedWallet, walletId: walletId);
       transferredWallet = true;
       ref
           .read(balanceSnapshotProvider.notifier)

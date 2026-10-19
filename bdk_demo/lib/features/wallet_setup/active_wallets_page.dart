@@ -32,7 +32,7 @@ class _ActiveWalletsPageState extends ConsumerState<ActiveWalletsPage> {
         return;
       }
 
-      ref.read(activeWalletProvider.notifier).set(wallet);
+      ref.read(activeWalletProvider.notifier).set(wallet, walletId: record.id);
       ref.read(activeWalletRecordProvider.notifier).set(record);
       context.push(AppRoutes.home);
     } on StateError {
